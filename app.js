@@ -73,8 +73,16 @@ function bestSet(exId) {
   for (const h of S.history) for (const it of h.items) if (it.ex === exId) for (const s of it.sets) if (!b || num(s.w) > num(b.w) || (num(s.w) === num(b.w) && num(s.r) > num(b.r))) b = s;
   return b;
 }
+const restOf = it => (it.rest == null ? 90 : it.rest);
+const hasPh = e => !!e && !e.custom && !!e.id;
+const phStyle = e => `style="background-image:url(img/${e.id}.jpg)"`;
+function exHistory(exId) {
+  const out = [];
+  for (const h of S.history) { const it = h.items.find(i => i.ex === exId); if (it && it.sets.length) { let b = it.sets[0]; for (const x of it.sets) if (num(x.w) > num(b.w) || (num(x.w) === num(b.w) && num(x.r) > num(b.r))) b = x; out.push({ t: h.t, s: b }); if (out.length >= 6) break; } }
+  return out;
+}
 const setStr = s => (num(s.w) ? fmt(num(s.w)) + ' кг × ' : '') + (s.r || '—');
-const estMin = day => Math.round(day.items.reduce((a, it) => a + it.sets * (45 + (it.rest || 90)), 0) / 60 + 8);
+const estMin = day => Math.round(day.items.reduce((a, it) => a + (/мин/.test(it.reps) ? (parseInt(it.reps, 10) || 5) * 60 * it.sets : it.sets * (45 + restOf(it))), 0) / 60 + 6);
 function goalInfo() {
   const p = S.profile; if (!p || !p.goal || !S.weights.length) return null;
   const start = S.weights[0].w, cur = curWeight(), goal = p.goal;
@@ -118,7 +126,7 @@ function recommend(p) {
 }
 
 /* ====== интерфейс: общее ====== */
-let tab = 'today', stack = [], players = [], exFilter = { g: 'all', q: '' }, ed = null, pickCb = null, modalCb = null;
+let tab = 'today', stack = [], players = [], exFilter = { g: 'all', q: '', k: 'all' }, ed = null, pickCb = null, modalCb = null;
 let restEnd = 0, lastSheetKey = '', toastTimer = 0;
 const TABS = [
   ['today', 'Сегодня', '<path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/>'],
@@ -136,7 +144,7 @@ function confirmBox(text, yes, cb) {
   modalCb = cb;
   modal(`<h2>${esc(text)}</h2><div class="row"><button class="btn danger grow" data-a="mYes">${esc(yes)}</button><button class="btn sec grow" data-a="mNo">Отмена</button></div>`);
 }
-const thumb = e => FIG.svg(e.fig, 0.65, esc(e.n));
+const thumb = e => (hasPh(e) ? `<div class="ph b" ${phStyle(e)} role="img" aria-label="${esc(e.n)}"></div>` : FIG.svg(e.fig, 0.65, esc(e.n)));
 const shead = (title, extra) => `<div class="shead"><div class="wrap"><button class="back" data-a="back" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><div class="ttl">${esc(title)}</div>${extra || ''}</div></div>`;
 
 function render() {
@@ -154,11 +162,22 @@ function render() {
     document.documentElement.style.overflow = '';
     $('#view').innerHTML = VIEWS[tab]();
   }
+  wake(!!S.cur && stack.some(x => x.t === 'workout'));
   document.querySelectorAll('[data-anim]').forEach(el => {
     const e = exBy(el.dataset.anim);
     if (e && e.fig) players.push(FIG.play(el.querySelector('svg'), e.fig));
   });
 }
+
+let wl = null;
+async function wake(on) {
+  try {
+    if (on && !wl && navigator.wakeLock) { wl = await navigator.wakeLock.request('screen'); wl.addEventListener('release', () => { wl = null; }); }
+    else if (!on && wl) { const x = wl; wl = null; x.release(); }
+  } catch (e) { wl = null; }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.cur && stack.some(x => x.t === 'workout')) wake(true); });
+const kindSelect = id => `<select class="in" id="${id}" data-f="exk" aria-label="Оборудование">${[['all', 'Любое оборудование'], ['m', 'Тренажёры'], ['f', 'Штанга и гантели'], ['b', 'Свой вес']].map(o => `<option value="${o[0]}"${exFilter.k === o[0] ? ' selected' : ''}>${o[1]}</option>`).join('')}</select>`;
 
 /* ====== вкладки ====== */
 const VIEWS = {
@@ -203,8 +222,8 @@ const VIEWS = {
 
   ex() {
     return `<div class="row between"><h1>Упражнения</h1><button class="btn sm sec" data-a="exNew">+ Своё</button></div>
-      <input class="in" id="exq" type="search" placeholder="Поиск: жим, спина, гантели…" value="${esc(exFilter.q)}" data-f="exq" aria-label="Поиск упражнений">
-      ${groupChips('exG')}<div class="exgrid" id="exgrid">${exGrid()}</div>`;
+      <div class="filters"><input class="in" id="exq" type="search" placeholder="Поиск: жим, спина…" value="${esc(exFilter.q)}" data-f="exq" aria-label="Поиск упражнений">${kindSelect('exk')}</div>
+      ${groupChips('exG')}<p class="small muted" id="excount">${exCount()}</p><div class="exgrid" id="exgrid">${exGrid()}</div>`;
   },
 
   prog() {
@@ -250,7 +269,7 @@ const VIEWS = {
         </dl><p class="small muted">Это расчётные ориентиры по формуле Миффлина — Сан Жеора, а не медицинская рекомендация. При заболеваниях посоветуйтесь с врачом.</p>
         ${p.goal ? `<p class="small">Рекомендуемая программа: <button class="btn ghost sm" data-a="prog" data-id="${recommend(p)}">«${esc(progBy(recommend(p)).n)}»</button></p>` : ''}</section>`;
     }
-    h += `<section class="card"><h2>Данные</h2><p class="small muted">${esc(syncText)}. ${cloudDoc ? 'Записи видны только вам и доступны с любого устройства, где вы вошли в аккаунт.' : 'Записи хранятся в памяти браузера на этом устройстве.'}</p>${window.claude ? '' : '<p class="small muted">Данные живут только на этом устройстве. Время от времени сохраняйте копию в файл: она пригодится при смене телефона или очистке браузера.</p><div class="grid2"><button class="btn sec" data-a="backup">Сохранить копию</button><label class="btn sec" style="cursor:pointer">Восстановить<input type="file" id="imp" accept="application/json,.json" hidden></label></div>'}<button class="btn danger" data-a="reset">Сбросить все данные</button></section>`;
+    h += `<section class="card"><h2>Данные</h2><p class="small muted">${esc(syncText)}. ${cloudDoc ? 'Записи видны только вам и доступны с любого устройства, где вы вошли в аккаунт.' : 'Записи хранятся в памяти браузера на этом устройстве.'}</p>${window.claude ? '' : '<p class="small muted">Данные живут только на этом устройстве. Время от времени сохраняйте копию в файл: она пригодится при смене телефона или очистке браузера.</p><div class="grid2"><button class="btn sec" data-a="backup">Сохранить копию</button><label class="btn sec" style="cursor:pointer">Восстановить<input type="file" id="imp" accept="application/json,.json" hidden></label></div>'}<button class="btn danger" data-a="reset">Сбросить все данные</button></section><p class="small muted">Фотографии упражнений: открытая база free-exercise-db (общественное достояние).</p>`;
     return h;
   }
 };
@@ -280,14 +299,15 @@ function readProfile() {
 function groupChips(act) {
   return `<div class="chips"><button class="chip${exFilter.g === 'all' ? ' on' : ''}" data-a="${act}" data-id="all">Все</button>${GROUPS.map(g => `<button class="chip${exFilter.g === g.id ? ' on' : ''}" data-a="${act}" data-id="${g.id}"><i class="dot" style="background:${g.c}"></i>${g.n}</button>`).join('')}</div>`;
 }
+const exCount = () => { const n = filteredEx().length; return n + ' ' + plural(n, 'упражнение', 'упражнения', 'упражнений'); };
 function filteredEx() {
   const q = exFilter.q.trim().toLowerCase();
-  return allEx().filter(e => (exFilter.g === 'all' || e.g === exFilter.g) && (!q || (e.n + ' ' + (e.m || '') + ' ' + (e.q || '') + ' ' + grp(e.g).n).toLowerCase().includes(q)));
+  return allEx().filter(e => (exFilter.g === 'all' || e.g === exFilter.g) && (!exFilter.k || exFilter.k === 'all' || e.k === exFilter.k) && (!q || (e.n + ' ' + (e.m || '') + ' ' + (e.q || '') + ' ' + grp(e.g).n).toLowerCase().includes(q)));
 }
 function exGrid() {
   const l = filteredEx();
   if (!l.length) return '<p class="muted" style="grid-column:1/-1">Ничего не найдено. Измените запрос или добавьте своё упражнение.</p>';
-  return l.map(e => `<button class="excard" data-a="ex" data-id="${e.id}"><div class="thumb">${thumb(e)}</div><div class="meta"><span class="name">${esc(e.n)}</span><span class="small muted"><i class="dot" style="background:${grp(e.g).c}"></i> ${grp(e.g).n}</span><span class="small muted">${e.custom ? 'Своё упражнение' : LEVELS[e.lvl]}</span></div></button>`).join('');
+  return l.map(e => `<button class="excard" data-a="ex" data-id="${e.id}"><div class="thumb${hasPh(e) ? ' pht' : ''}">${thumb(e)}</div><div class="meta"><span class="name">${esc(e.n)}</span><span class="small muted"><i class="dot" style="background:${grp(e.g).c}"></i> ${grp(e.g).n}</span><span class="small muted">${e.custom ? 'Своё упражнение' : LEVELS[e.lvl]}</span></div></button>`).join('');
 }
 function exRows(act) {
   const l = filteredEx();
@@ -327,17 +347,21 @@ const SHEETS = {
 
   ex(o) {
     const e = exBy(o.id); if (!e) return shead('Упражнение') + '<div class="wrap sbody"><p>Упражнение удалено.</p></div>';
-    const g = grp(e.g), best = bestSet(e.id), last = lastSets(e.id);
+    const g = grp(e.g), best = bestSet(e.id), last = lastSets(e.id), hist = exHistory(e.id);
+    const view = hasPh(e) ? (e.fig ? o.view || 'ph' : 'ph') : 'fig';
     let h = shead(g.n) + `<div class="wrap sbody">
-      <div class="stage" data-anim="${e.id}">${FIG.svg(e.fig, 0, esc(e.n))}${e.fig ? '<button class="btn sm sec play" data-a="animToggle">Пауза</button>' : ''}</div>
+      ${hasPh(e) && e.fig ? `<div class="seg"><button class="${view === 'ph' ? 'on' : ''}" data-a="exView" data-v="ph">Фото</button><button class="${view === 'fig' ? 'on' : ''}" data-a="exView" data-v="fig">Схема движения</button></div>` : ''}
+      ${view === 'ph' ? `<div class="stage"><div class="ph swap" id="exph" ${phStyle(e)} role="img" aria-label="${esc(e.n)}: начало и конец движения"></div><button class="btn sm sec play" data-a="phToggle">Пауза</button></div><p class="small muted" style="margin-top:-8px">Кадры сменяются: исходное положение и конечная точка движения.</p>`
+      : `<div class="stage" data-anim="${e.id}">${FIG.svg(e.fig, 0, esc(e.n))}${e.fig ? '<button class="btn sm sec play" data-a="animToggle">Пауза</button>' : ''}</div>`}
       <div class="col" style="gap:8px"><h1>${esc(e.n)}</h1><div class="row"><span class="chip"><i class="dot" style="background:${g.c}"></i>${g.n}</span>${e.lvl ? `<span class="chip">${LEVELS[e.lvl]}</span>` : '<span class="chip">Своё упражнение</span>'}${e.q ? `<span class="chip">${esc(e.q)}</span>` : ''}</div></div>
       ${e.m ? `<p><b>Работают:</b> ${esc(e.m)}</p>` : ''}${e.d ? `<p>${esc(e.d)}</p>` : ''}`;
     if (e.st && e.st.length) h += `<section class="card"><h2>Как выполнять</h2><ol class="steps">${e.st.map(s => `<li><span>${esc(s)}</span></li>`).join('')}</ol></section>`;
     if (e.er && e.er.length) h += `<section class="card"><h2>Частые ошибки</h2><div class="errs">${e.er.map(x => `<div class="err"><span class="x" aria-hidden="true">✕</span><div><b>${esc(x[0])}</b>${x[1] ? `<span class="muted">${esc(x[1])}</span>` : ''}</div></div>`).join('')}</div></section>`;
     if (e.tip) h += `<div class="tipbox"><b>Совет.</b> ${esc(e.tip)}</div>`;
-    h += `<section class="card"><h2>Нагрузка</h2><dl class="kv"><dt>Для начала</dt><dd>${e.sets || 3} × ${esc(e.reps || '10–12')}</dd><dt>Отдых между подходами</dt><dd>${e.rest || 90} с</dd>
+    h += `<section class="card"><h2>Нагрузка</h2><dl class="kv"><dt>Для начала</dt><dd>${e.sets || 3} × ${esc(e.reps || '10–12')}</dd>${e.rest === 0 ? '' : `<dt>Отдых между подходами</dt><dd>${e.rest || 90} с</dd>`}
       ${last ? `<dt>В прошлый раз</dt><dd class="small">${last.map(setStr).join(' · ')}</dd>` : ''}${best && num(best.w) ? `<dt>Ваш лучший подход</dt><dd>${setStr(best)}</dd>` : ''}</dl>
-      <p class="small muted">Дыхание: выдох на усилии, вдох при возврате в исходное положение.</p></section>`;
+      ${e.unit === 'min' ? '' : '<p class="small muted">Дыхание: выдох на усилии, вдох при возврате в исходное положение.</p>'}</section>`;
+    if (hist.length > 1) h += `<section class="card"><h2>Ваши результаты</h2><dl class="kv">${hist.map(x => `<dt>${dShort(x.t)}</dt><dd>${setStr(x.s)}</dd>`).join('')}</dl>${num(hist[0].s.w) > num(hist[hist.length - 1].s.w) ? `<p class="small" style="color:var(--ok)">Рост: +${fmt(num(hist[0].s.w) - num(hist[hist.length - 1].s.w))} кг за ${hist.length} ${plural(hist.length, 'тренировку', 'тренировки', 'тренировок')}.</p>` : ''}</section>`;
     if (e.custom) h += `<div class="row"><button class="btn sec grow" data-a="exEdit" data-id="${e.id}">Изменить</button><button class="btn danger grow" data-a="exDel" data-id="${e.id}">Удалить</button></div>`;
     h += '</div>';
     if (S.cur && !o.noAdd) h += `<div class="sfoot"><div class="wrap"><button class="btn" data-a="wAddThis" data-id="${e.id}">Добавить в текущую тренировку</button></div></div>`;
@@ -350,7 +374,7 @@ const SHEETS = {
     let h = shead('Программа') + `<div class="wrap sbody"><div class="col" style="gap:8px"><h1>${esc(p.n)}</h1><div class="row">${[p.lvl, p.per, p.weeks, p.goal].filter(Boolean).map(x => `<span class="chip">${esc(x)}</span>`).join('')}${act ? '<span class="chip ok">Активная</span>' : ''}</div></div>${p.d ? `<p>${esc(p.d)}</p>` : ''}`;
     if (!p.custom) h += `<div class="tipbox"><b>Как пользоваться.</b> Чередуйте дни по порядку, между тренировками отдыхайте минимум день. Перед началом 5–10 минут разминки.</div>`;
     p.days.forEach((d, i) => {
-      h += `<section class="card"><div class="row between"><h2>${esc(d.n)}</h2><span class="small muted">около ${estMin(d)} мин</span></div><div class="list">${d.items.map(it => { const e = exBy(it.ex); return e ? `<button class="exrow" data-a="ex" data-id="${e.id}"><div class="mini">${thumb(e)}</div><div class="grow"><div class="name">${esc(e.n)}</div><div class="small muted num">${it.sets} × ${esc(it.reps)} · отдых ${it.rest || 90} с</div></div></button>` : ''; }).join('') || '<p class="small muted">В этом дне пока нет упражнений.</p>'}</div>
+      h += `<section class="card"><div class="row between"><h2>${esc(d.n)}</h2><span class="small muted">около ${estMin(d)} мин</span></div><div class="list">${d.items.map(it => { const e = exBy(it.ex); return e ? `<button class="exrow" data-a="ex" data-id="${e.id}"><div class="mini">${thumb(e)}</div><div class="grow"><div class="name">${esc(e.n)}</div><div class="small muted num">${it.sets} × ${esc(it.reps)}${restOf(it) ? ' · отдых ' + restOf(it) + ' с' : ''}</div></div></button>` : ''; }).join('') || '<p class="small muted">В этом дне пока нет упражнений.</p>'}</div>
         ${d.items.length ? `<button class="btn sec" data-a="startDay" data-id="${p.id}" data-d="${i}">Начать «${esc(d.n)}»</button>` : ''}</section>`;
     });
     if (p.custom) h += `<div class="row"><button class="btn sec grow" data-a="edEdit" data-id="${p.id}">Изменить</button><button class="btn danger grow" data-a="progDel" data-id="${p.id}">Удалить</button></div>`;
@@ -364,17 +388,18 @@ const SHEETS = {
     let h = shead(c.name, `<span class="chip num" id="wtime">${mmss((Date.now() - c.start) / 1000)}</span>`) + `<div class="wrap sbody">
       <div class="col" style="gap:6px"><div class="bar"><i style="width:${tot ? dn / tot * 100 : 0}%"></i></div><span class="small muted num">Подходов сделано: ${dn} из ${tot}</span></div>`;
     if (restEnd > Date.now()) h += `<div class="rest"><span>Отдых</span><span class="t" id="restt">${mmss((restEnd - Date.now()) / 1000)}</span><span class="row"><button class="btn sm" data-a="restAdd">+30 с</button><button class="btn sm" data-a="restSkip">Пропустить</button></span></div>`;
+    if (!c.warm && c.items.length && (exBy(c.items[0].ex) || {}).g !== 'cardio' && !c.items.some(i => i.sets.some(x => x.done))) h += '<section class="card flat"><h2>Сначала разминка</h2><p class="small muted">5–7 минут лёгкого кардио и вращения в суставах. Перед первым тяжёлым упражнением сделайте 1–2 подхода с половиной рабочего веса.</p><button class="btn sec sm" style="align-self:flex-start" data-a="wWarm">Размялся</button></section>';
     if (!c.items.length) h += '<section class="card flat"><p class="muted">Добавьте первое упражнение из базы, отмечайте подходы, а приложение запомнит веса на следующий раз.</p></section>';
     c.items.forEach((it, i) => {
       const e = exBy(it.ex) || { n: 'Удалённое упражнение', id: '' }, d = it.sets.filter(s => s.done).length, all = it.sets.length && d === it.sets.length, open = c.open === i;
       const last = lastSets(it.ex);
       h += `<section class="card wex${all ? ' done' : ''}"><button class="head" data-a="wOpen" data-i="${i}" aria-expanded="${open}"><div class="mini">${thumb(e)}</div><div class="grow"><div style="font-weight:600;line-height:1.3">${esc(e.n)}</div><div class="small muted num">${it.sets.length} × ${esc(it.reps || '')} · сделано ${d} из ${it.sets.length}</div></div>${all ? '<span class="chip ok">Готово</span>' : ''}</button>`;
       if (open) {
-        h += `${e.fig ? `<div class="stage" data-anim="${e.id}" style="max-height:230px"><div style="max-width:230px;margin:0 auto">${FIG.svg(e.fig, 0, esc(e.n))}</div></div>` : ''}
+        h += `${hasPh(e) ? `<div class="stage"><div class="ph swap" ${phStyle(e)} role="img" aria-label="${esc(e.n)}"></div></div>` : e.fig ? `<div class="stage" data-anim="${e.id}" style="max-height:230px"><div style="max-width:230px;margin:0 auto">${FIG.svg(e.fig, 0, esc(e.n))}</div></div>` : ''}
           <div class="row between"><button class="btn ghost sm" data-a="ex" data-id="${e.id}" data-noadd="1">Техника и ошибки</button>${last ? `<span class="small muted num">Прошлый раз: ${last.map(setStr).join(' · ')}</span>` : '<span class="small muted">Вес подбирайте с запасом в 2–3 повтора</span>'}</div>
-          <div class="sets"><span class="h">№</span><span class="h">Вес, кг</span><span class="h">${e.timed ? 'Секунды' : 'Повторы'}</span><span class="h">Готово</span>
+          <div class="sets"><span class="h">№</span><span class="h">Вес, кг</span><span class="h">${e.unit === 'min' ? 'Минуты' : e.timed ? 'Секунды' : 'Повторы'}</span><span class="h">Готово</span>
           ${it.sets.map((s, j) => `<span class="n">${j + 1}</span><input class="in num" id="w${i}_${j}" inputmode="decimal" value="${esc(s.w)}" placeholder="—" data-f="set" data-i="${i}" data-j="${j}" data-k="w" aria-label="Вес, подход ${j + 1}"><input class="in num" id="r${i}_${j}" inputmode="numeric" value="${esc(s.r)}" placeholder="—" data-f="set" data-i="${i}" data-j="${j}" data-k="r" aria-label="Повторы, подход ${j + 1}"><button class="check${s.done ? ' on' : ''}" data-a="wCheck" data-i="${i}" data-j="${j}" aria-label="Подход ${j + 1} выполнен" aria-pressed="${!!s.done}"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>`).join('')}</div>
-          <div class="row"><button class="btn sm sec" data-a="wAddSet" data-i="${i}">+ Подход</button>${it.sets.length > 1 ? `<button class="btn sm sec" data-a="wDelSet" data-i="${i}">− Подход</button>` : ''}<span class="grow"></span><button class="btn ghost sm" style="color:var(--bad)" data-a="wDelEx" data-i="${i}">Убрать</button></div>`;
+          <div class="row"><button class="btn sm sec" data-a="wAddSet" data-i="${i}">+ Подход</button>${it.sets.length > 1 ? `<button class="btn sm sec" data-a="wDelSet" data-i="${i}">− Подход</button>` : ''}<span class="grow"></span><button class="btn ghost sm" data-a="wSwap" data-i="${i}">Заменить</button><button class="btn ghost sm" style="color:var(--bad)" data-a="wDelEx" data-i="${i}">Убрать</button></div>`;
       }
       h += '</section>';
     });
@@ -400,7 +425,7 @@ const SHEETS = {
   },
 
   picker() {
-    return shead('Выберите упражнение') + `<div class="wrap sbody"><input class="in" id="pkq" type="search" placeholder="Поиск упражнения" value="${esc(exFilter.q)}" data-f="pkq" aria-label="Поиск упражнений">${groupChips('pkG')}
+    return shead('Выберите упражнение') + `<div class="wrap sbody"><input class="in" id="pkq" type="search" placeholder="Поиск упражнения" value="${esc(exFilter.q)}" data-f="pkq" aria-label="Поиск упражнений">${kindSelect('pkk')}${groupChips('pkG')}
       <div class="list" id="pklist">${exRows('pick')}</div><button class="btn sec" data-a="exNew">+ Создать своё упражнение</button></div>`;
   },
 
@@ -439,7 +464,7 @@ function mkItem(exId, sets, reps, rest) {
   const e = exBy(exId) || {}, last = lastSets(exId);
   sets = sets || e.sets || 3; reps = reps || e.reps || '10';
   const r0 = parseInt(reps, 10) || '';
-  return { ex: exId, reps: String(reps), rest: rest || e.rest || 90, sets: Array.from({ length: sets }, (_, i) => { const l = last && (last[i] || last[last.length - 1]); return { w: l && num(l.w) ? String(l.w) : '', r: r0 === '' ? '' : String(r0), done: false }; }) };
+  return { ex: exId, reps: String(reps), rest: rest != null ? rest : e.rest != null ? e.rest : 90, sets: Array.from({ length: sets }, (_, i) => { const l = last && (last[i] || last[last.length - 1]); return { w: l && num(l.w) ? String(l.w) : '', r: r0 === '' ? '' : String(r0), done: false }; }) };
 }
 function startWorkout(name, items, progId, dayIdx) {
   S.cur = { name, prog: progId || null, day: dayIdx || 0, start: Date.now(), open: 0, items };
@@ -476,13 +501,21 @@ setInterval(() => {
 /* ====== действия ====== */
 const setPath = (obj, path, val) => { const k = path.split('.'); let o = obj; for (let i = 0; i < k.length - 1; i++) o = o[k[i]]; o[k[k.length - 1]] = val; };
 const A = {
-  tab(d) { tab = d.id; stack = []; exFilter = { g: 'all', q: '' }; render(); window.scrollTo(0, 0); },
+  tab(d) { tab = d.id; stack = []; exFilter = { g: 'all', q: '', k: 'all' }; render(); window.scrollTo(0, 0); },
   back() { const top = stack[stack.length - 1]; if (top && top.t === 'editor') ed = null; if (top && top.t === 'picker') pickCb = null; closeSheet(); },
   ex(d) { openSheet({ t: 'ex', id: d.id, noAdd: !!d.noadd }); },
   prog(d) { openSheet({ t: 'prog', id: d.id }); },
   guide() { openSheet({ t: 'guide' }); },
   exG(d) { exFilter.g = d.id; render(); },
   pkG(d) { exFilter.g = d.id; render(); },
+  exView(d) { stack[stack.length - 1].view = d.v; render(); },
+  phToggle(d, el) { const p = $('#exph'); if (p) el.textContent = p.classList.toggle('paused') ? 'Показать движение' : 'Пауза'; },
+  wWarm() { S.cur.warm = true; saveLocal(); render(); },
+  wSwap(d) {
+    const it = S.cur.items[+d.i], old = exBy(it.ex);
+    pickCb = id => { const e = exBy(id) || {}; it.ex = id; it.reps = e.reps || it.reps; it.rest = e.rest != null ? e.rest : it.rest; const last = lastSets(id), r0 = parseInt(it.reps, 10); it.sets.forEach((x, j) => { if (!x.done) { const l = last && (last[j] || last[last.length - 1]); x.w = l && num(l.w) ? String(l.w) : ''; x.r = isNaN(r0) ? '' : String(r0); } }); };
+    exFilter = { g: old ? old.g : 'all', q: '', k: 'all' }; openSheet({ t: 'picker' }); toast('Показаны упражнения на ту же группу мышц');
+  },
   animToggle(d, el) { const p = players[0]; if (p) el.textContent = p.toggle() ? 'Пауза' : 'Показать движение'; },
 
   /* профиль */
@@ -518,11 +551,11 @@ const A = {
   edAddDay() { ed.days.push({ n: 'День ' + (ed.days.length + 1), items: [] }); render(); },
   edDelDay(d) { ed.days.splice(+d.d, 1); render(); },
   edDelEx(d) { ed.days[+d.d].items.splice(+d.i, 1); render(); },
-  edAddEx(d) { const di = +d.d; pickCb = id => { const e = exBy(id); ed.days[di].items.push({ ex: id, sets: e.sets || 3, reps: e.reps || '10–12', rest: e.rest || 90 }); }; exFilter = { g: 'all', q: '' }; openSheet({ t: 'picker' }); },
+  edAddEx(d) { const di = +d.d; pickCb = id => { const e = exBy(id); ed.days[di].items.push({ ex: id, sets: e.sets || 3, reps: e.reps || '10–12', rest: e.rest != null ? e.rest : 90 }); }; exFilter = { g: 'all', q: '', k: 'all' }; openSheet({ t: 'picker' }); },
   edSave() {
     if (!ed.n.trim()) return toast('Дайте программе название.');
     if (!ed.days.some(d => d.items.length)) return toast('Добавьте хотя бы одно упражнение.');
-    const p = { id: ed.id, n: ed.n.trim().slice(0, 60), d: (ed.d || '').slice(0, 200), custom: true, lvl: 'Моя программа', days: ed.days.map(d => ({ n: d.n.trim() || 'День', items: d.items.map(i => ({ ex: i.ex, sets: Math.max(1, Math.min(10, Math.round(num(i.sets)) || 3)), reps: String(i.reps || '10').slice(0, 14), rest: i.rest || 90 })) })) };
+    const p = { id: ed.id, n: ed.n.trim().slice(0, 60), d: (ed.d || '').slice(0, 200), custom: true, lvl: 'Моя программа', days: ed.days.map(d => ({ n: d.n.trim() || 'День', items: d.items.map(i => ({ ex: i.ex, sets: Math.max(1, Math.min(10, Math.round(num(i.sets)) || 3)), reps: String(i.reps || '10').slice(0, 14), rest: i.rest != null ? i.rest : 90 })) })) };
     const ix = S.customProg.findIndex(x => x.id === p.id);
     if (ix >= 0) S.customProg[ix] = p; else S.customProg.push(p);
     ed = null; save(); stack = stack.filter(s => s.t !== 'editor' && s.t !== 'prog'); tab = 'prog'; openSheet({ t: 'prog', id: p.id }); toast('Программа сохранена');
@@ -553,7 +586,7 @@ const A = {
     if (s.done) {
       const nx = it.sets[+d.j + 1]; if (nx && !nx.done && nx.w === '' && s.w !== '') nx.w = s.w;
       const allDone = it.sets.every(x => x.done), lastOfAll = S.cur.items.every(i => i.sets.every(x => x.done));
-      restEnd = lastOfAll ? 0 : Date.now() + (it.rest || 90) * 1000;
+      restEnd = lastOfAll || !restOf(it) ? 0 : Date.now() + restOf(it) * 1000;
       if (allDone) { const n = S.cur.items.findIndex(i => i.sets.some(x => !x.done)); S.cur.open = n; if (lastOfAll) toast('Все подходы сделаны. Можно завершать!'); }
     }
     save(); render();
@@ -561,7 +594,7 @@ const A = {
   wAddSet(d) { const it = S.cur.items[+d.i], l = it.sets[it.sets.length - 1] || { w: '', r: '' }; it.sets.push({ w: l.w, r: l.r, done: false }); save(); render(); },
   wDelSet(d) { S.cur.items[+d.i].sets.pop(); save(); render(); },
   wDelEx(d) { S.cur.items.splice(+d.i, 1); S.cur.open = Math.min(S.cur.open, S.cur.items.length - 1); save(); render(); },
-  wAddEx() { pickCb = id => { S.cur.items.push(mkItem(id)); S.cur.open = S.cur.items.length - 1; }; exFilter = { g: 'all', q: '' }; openSheet({ t: 'picker' }); },
+  wAddEx() { pickCb = id => { S.cur.items.push(mkItem(id)); S.cur.open = S.cur.items.length - 1; }; exFilter = { g: 'all', q: '', k: 'all' }; openSheet({ t: 'picker' }); },
   wAddThis(d) { S.cur.items.push(mkItem(d.id)); S.cur.open = S.cur.items.length - 1; save(); stack = [{ t: 'workout' }]; render(); toast('Упражнение добавлено'); },
   wFinish() { finishWorkout(); },
   wCancel() { confirmBox('Отменить тренировку? Отмеченные подходы не сохранятся.', 'Отменить тренировку', () => { S.cur = null; restEnd = 0; save(); stack = []; render(); }); },
@@ -578,7 +611,8 @@ function applyProfile(p) {
 }
 
 const F = {
-  exq(el) { exFilter.q = el.value; $('#exgrid').innerHTML = exGrid(); },
+  exq(el) { exFilter.q = el.value; $('#exgrid').innerHTML = exGrid(); $('#excount').textContent = exCount(); },
+  exk(el) { exFilter.k = el.value; render(); },
   pkq(el) { exFilter.q = el.value; $('#pklist').innerHTML = exRows('pick'); },
   set(el) { const d = el.dataset; S.cur.items[+d.i].sets[+d.j][d.k] = el.value.trim().slice(0, 8); S.updatedAt = Date.now(); saveLocal(); schedulePush(); },
   ed(el) { if (ed) setPath(ed, el.dataset.p, el.value); }

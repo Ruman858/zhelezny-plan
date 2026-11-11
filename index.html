@@ -205,6 +205,18 @@ dl{margin:0}
 .icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
 @media (max-width:420px){ .grid3{grid-template-columns:1fr 1fr} h1{font-size:20px} }
 @media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto!important;transition:none!important} }
+.ph{display:block;width:100%;aspect-ratio:4/3;background-size:200% 100%;background-position:0 0;background-repeat:no-repeat;background-color:var(--surface2)}
+.ph.b{background-position:100% 0}
+.ph.swap{animation:phswap 2.8s steps(1) infinite}
+.ph.swap.paused{animation-play-state:paused}
+@keyframes phswap{0%{background-position:0 0}50%{background-position:100% 0}}
+.excard .thumb.pht{padding:0;border-bottom:0}
+.mini{overflow:hidden}
+.stage .ph{max-width:520px;margin:0 auto}
+.filters{display:grid;grid-template-columns:1fr auto;gap:8px}
+.filters select{width:auto;max-width:190px;font-size:14px}
+@media (max-width:420px){ .filters{grid-template-columns:1fr} .filters select{max-width:none;width:100%} }
+@media (prefers-reduced-motion: reduce){ .ph.swap{animation:none;aspect-ratio:8/3;background-size:100% 100%} }
 </style>
 
 </head>
@@ -225,6 +237,7 @@ dl{margin:0}
 </div>
 <script src="anim.js"></script>
 <script src="data.js"></script>
+<script src="data2.js"></script>
 <script src="app.js"></script>
 <script>if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>
 </body>
